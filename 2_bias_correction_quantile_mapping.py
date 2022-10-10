@@ -35,22 +35,23 @@ changing to run through catchments, then variables.
 """
 
 import os
-# import sys
 import shutil
-
 import numpy as np
+import pandas as pd
 from scipy.stats.mstats import mquantiles
 from scipy.interpolate import interp1d
+
+# import sys
 
 # -----------------------------------------------------------------------------
 
 root = 'I:/SHETRAN_GB_2021/'
 historical_folder = root + 'historical_220601_GB_APM/'
 scenario_folder = root + 'UKCP18rcm_220708_APM_GB_NI/'
-simulation_list = root + 'scripts/UKCP18rcm_220708_APM_GB/Simulation_Setup_List.csv'
+simulation_list = root + 'scripts/UKCP18rcm_220708_APM_UK/Simulation_Setup_List.csv'
 
 log_path = scenario_folder + 'bc_log.csv'
-log_append = True
+log_append = False
 
 # scenarios = ['control', 'future'] # [scenario]
 models = ["05"]  # ['04', '06', '07', '08', '09', '10', '11', '12', '13', '15']  # '01' '05',
@@ -61,7 +62,6 @@ use_multiprocessing = False  # True/False
 nprocs = 30  # /32
 
 
-# print("Test")
 # -----------------------------------------------------------------------------
 def read_ascii_raster(file_path, data_type=int, return_metadata=True):
     """Read ascii raster into numpy array, optionally returning headers."""
@@ -91,24 +91,40 @@ def read_ascii_raster(file_path, data_type=int, return_metadata=True):
         return arr
 
 
-def read_series(file_path):
-    dc = {}
-    with open(file_path, 'r') as fhi:
-        hdrs = fhi.readline()
-        hdrs = hdrs.rstrip().split(',')
-        hdrs = [int(h) for h in hdrs]
-        for cid in hdrs:
-            dc[cid] = []
-        for line in fhi:
-            line = line.rstrip().split(',')
-            cid = 1
-            for val in line:
-                try:
-                    dc[cid].append(float(val))
-                    cid += 1
-                except Exception as e:
-                    print(e)
-    return dc
+def eqm(obs, p, s, nbins=10, extrapolate=None):
+    """Empirical quantile mapping.
+
+    Based on: https://svn.oss.deltares.nl/repos/openearthtools/trunk/python/applications/hydrotools/hydrotools/statistics/bias_correction.py
+
+    Args:
+        obs: observed climate data for the training period
+        p: simulated climate by the model for the same variable obs for the
+            training ("control") period
+        s: simulated climate for the variables used in p, but considering the
+            test/projection ("scenario") period
+        nbins: number of quantile bins
+        extrapolate: None or 'constant', indicating the extrapolation method to
+            be applied to correct values in 's' that are out of the range of
+            lowest and highest quantile of 'p'
+
+    """
+    binmid = np.arange((1. / nbins) * 0.5, 1., 1. / nbins)
+
+    qo = mquantiles(obs[np.isfinite(obs)], prob=binmid)
+    qp = mquantiles(p[np.isfinite(p)], prob=binmid)
+
+    p2o = interp1d(qp, qo, kind='linear', bounds_error=False)
+
+    c = p2o(s)
+
+    if extrapolate is None:
+        c[s > np.max(qp)] = qo[-1]
+        c[s < np.min(qp)] = qo[0]
+    elif extrapolate == 'constant':
+        c[s > np.max(qp)] = s[s > np.max(qp)] + qo[-1] - qp[-1]
+        c[s < np.min(qp)] = s[s < np.min(qp)] + qo[0] - qp[0]
+
+    return c
 
 
 def process_catchment(catch, model, variable):  # , q=None
@@ -157,53 +173,41 @@ def process_catchment(catch, model, variable):  # , q=None
 
     # Read UKCP18 pre-correction time series file:
     subfolder = scenario_folder + model + '/' + catch + '/'
-    uncorr_ukcp18_series = read_series(subfolder + catch + '_' + variable + '.csv')
-    # Todo: Fill missing values, because there is a missing row in the rcp 05 PET file (15180)
-    # uncorr_ukcp18_series
+    uncorr_ukcp18_series = pd.read_csv(subfolder + catch + '_' + variable + '.csv')
 
     # Read historical time series file
     historical_subfolder = historical_folder + catch + '/'
     historical_path = historical_subfolder + catch + '_' + variable + '.csv'
-    historical_series = read_series(historical_path)
+    historical_series = pd.read_csv(historical_path)
 
     # Cell-wise quantile mapping
-    corr_series = {}
+    corr_series = pd.DataFrame()
     for yi in range(nrows):
         for xi in range(ncols):
             if mask[yi, xi] == 0:
-                h_cell = historical_cells[yi, xi]
-                s_cell = scenario_cells[yi, xi]
+                h_cell = str(historical_cells[yi, xi])
+                s_cell = str(scenario_cells[yi, xi])
 
-                h_series = np.asarray(historical_series[h_cell])
-                uc_series = np.asarray(uncorr_ukcp18_series[s_cell])
+                h_series = historical_series.loc[:, h_cell].values
+                uc_series = uncorr_ukcp18_series.loc[:, s_cell].values
 
-                nbins = 100
-                #  I decreased this. I don't think it makes any real difference.
+                c_series = eqm(obs=h_series,  # Observed data
+                               p=uc_series[335:10988],  # Training period (01/11/1980-31/12/2010?)
+                               s=uc_series,  # Scenario period (i.e. whole UKCP18 period)
+                               nbins=100,  # I decreased bins. I don't think it makes any real difference.
+                               extrapolate='constant')
 
-                c_series = eqm(h_series, uc_series[335:10988], uc_series, nbins=nbins, extrapolate='constant')
-
+                # Make sure that we have not bias controlled any negative values:
                 if variable in ['Precip', 'PET']:
                     c_series[c_series < 0.0] = 0.0
 
-                corr_series[h_cell] = c_series
+                corr_series = pd.concat((corr_series, pd.Series(c_series, name=h_cell)), axis=1)
+                # TODO Check that this works if the columns are not in the correct order...
 
-    # Write to output file
-    # subfolder = scenario_folder + "bc_" + model + '/' + catch + '/'
-    # if not os.path.exists(subfolder):
-    #    os.mkdir(subfolder)
-    output_path = destination_folder + catch + '_' + variable + '.csv'  # subfolder
-    hdrs = sorted(corr_series.keys())
-    hdrs = ','.join(str(h) for h in hdrs)
-    series_len = len(corr_series[1])
-    ncells = len(corr_series.keys())
-    with open(output_path, 'w') as fho:
-        fho.write(hdrs + '\n')
-        for t in range(series_len):
-            output_line = []
-            for ci in range(ncells):
-                output_line.append(corr_series[ci + 1][t])
-            output_line = ','.join('{:.2f}'.format(val) for val in output_line)
-            fho.write(output_line + '\n')
+    # Write the corrected dataset:
+    corr_series = corr_series.round(2)
+    output_path = destination_folder + catch + '_' + variable + '.csv'
+    corr_series.to_csv(output_path, index=False)
 
 
 def process_catchment_mp(catch, model, variable, q):
@@ -215,42 +219,6 @@ def process_catchment_mp(catch, model, variable, q):
         output_line = [model, variable, catch, 'N']
     output_line = ','.join(output_line)
     q.put(output_line)
-
-
-def eqm(obs, p, s, nbins=10, extrapolate=None):
-    """Empirical quantile mapping.
-    
-    Based on: https://svn.oss.deltares.nl/repos/openearthtools/trunk/python/applications/hydrotools/hydrotools/statistics/bias_correction.py
-    
-    Args:
-        obs: observed climate data for the training period
-        p: simulated climate by the model for the same variable obs for the 
-            training ("control") period
-        s: simulated climate for the variables used in p, but considering the 
-            test/projection ("scenario") period
-        nbins: number of quantile bins
-        extrapolate: None or 'constant', indicating the extrapolation method to
-            be applied to correct values in 's' that are out of the range of 
-            lowest and highest quantile of 'p'
-    
-    """
-    binmid = np.arange((1. / nbins) * 0.5, 1., 1. / nbins)
-
-    qo = mquantiles(obs[np.isfinite(obs)], prob=binmid)
-    qp = mquantiles(p[np.isfinite(p)], prob=binmid)
-
-    p2o = interp1d(qp, qo, kind='linear', bounds_error=False)
-
-    c = p2o(s)
-
-    if extrapolate is None:
-        c[s > np.max(qp)] = qo[-1]
-        c[s < np.min(qp)] = qo[0]
-    elif extrapolate == 'constant':
-        c[s > np.max(qp)] = s[s > np.max(qp)] + qo[-1] - qp[-1]
-        c[s < np.min(qp)] = s[s < np.min(qp)] + qo[0] - qp[0]
-
-    return c
 
 
 def log_status(log_path, q):
@@ -347,16 +315,16 @@ if __name__ == "__main__":
             if not log_append:
                 fh_log.write('Model,Variable,Catchment,Flag\n')
 
-            for case in cases_to_process:
-                model, variable, catch = case
+        for case in cases_to_process:
+            model, variable, catch = case
 
-                try:
-                    process_catchment(catch, model, variable)
-                    output_line = [model, variable, catch, 'Y']
-                    output_line = ','.join(output_line)
-                    fh_log.write(output_line + '\n')
-                except Exception as e:
-                    print(e)
-                    output_line = [model, variable, catch, 'N']
-                    output_line = ','.join(output_line)
-                    # fh_log.write(output_line + '\n')
+            try:
+                process_catchment(catch, model, variable)
+                output_line = [model, variable, catch, 'Y']
+                output_line = ','.join(output_line)
+                fh_log.write(output_line + '\n')
+            except Exception as e:
+                print(e)
+                output_line = [model, variable, catch, 'N']
+                output_line = ','.join(output_line)
+                fh_log.write(output_line + '\n')
