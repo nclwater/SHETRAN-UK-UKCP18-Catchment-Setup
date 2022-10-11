@@ -43,7 +43,7 @@ blade_folder = "C:/BenSmith/Blade_SHETRANGB_OpenCLIM_UKCP18rcm_220708_APM/Temp_s
 
 # Set climate runs to simulate:
 # rcm_suites = ["bc_04", "bc_05", "bc_06", "bc_07", "bc_08", "bc_09", "bc_10", "bc_11", "bc_12", "bc_13", "bc_15"]
-rcm_suites = ["bc_01"]
+rcm_suites = ["bc_07"]
 
 # Set the file containing catchment names and multiprocessing groups:
 runtimes_path = CONVEX_simulation_folder + rcm_suites[0] + '/UKCP18_runtime_estimates_' + rcm_suites[0] + '.csv'

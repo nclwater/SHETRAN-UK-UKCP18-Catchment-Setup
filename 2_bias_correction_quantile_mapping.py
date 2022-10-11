@@ -31,6 +31,12 @@ already exist will not be reprocessed.
 
 It is a bit weird that it runs through variables first, then catchments, but this works. Consider
 changing to run through catchments, then variables.
+
+TODO:
+    - There is an issue with the log file - if you open this in Excel, it will change the RCP names
+      to numbers, i.e. 05 --> 5. This will then mean that the logs will not match and you will overwrite
+      the previous setups. There may be simple ways to change this using Pandas. I have added a botch to
+      check these both as strings and numbers.
 -----------------------------------------------------------------------------
 """
 
@@ -51,15 +57,15 @@ scenario_folder = root + 'UKCP18rcm_220708_APM_GB_NI/'
 simulation_list = root + 'scripts/UKCP18rcm_220708_APM_UK/Simulation_Setup_List.csv'
 
 log_path = scenario_folder + 'bc_log.csv'
-log_append = False
+log_append = True  # Not fully sure the purpose of the code linked to this
 
 # scenarios = ['control', 'future'] # [scenario]
 models = ["05"]  # ['04', '06', '07', '08', '09', '10', '11', '12', '13', '15']  # '01' '05',
 variables = ['Precip', 'PET', 'Temp']
 variables_standard = {'Precip': 'pr', 'PET': 'pet', 'Temp': 'tas'}
 
-use_multiprocessing = False  # True/False
-nprocs = 30  # /32
+use_multiprocessing = True  # True/False
+nprocs = 25  # /32
 
 
 # -----------------------------------------------------------------------------
@@ -129,14 +135,10 @@ def eqm(obs, p, s, nbins=10, extrapolate=None):
 
 def process_catchment(catch, model, variable):  # , q=None
     print(model, variables_standard[variable], catch)
-    # --- Copy pre-correction files that do not need to be changed
+
     destination_folder = scenario_folder + "bc_" + model + '/' + catch + "/"
-    # E.g. "I:/SHETRAN_GB_2021/UKCP18rcm_220708_APM_GB/01_bc/1001/"
 
-    if not os.path.exists(destination_folder):
-        os.mkdir(destination_folder)
-        # TODO Make this work recursively, currently it doesn't work unless the bc_xx is already created.
-
+    # --- Copy pre-correction files that do not need to be changed
     if variable == 'Precip':
 
         # - cells map needs to come from historical, not pre-correction
@@ -296,13 +298,32 @@ if log_append:
             case = '_'.join(case)
             processed.append(case)
 
+# TODO - Consider changing the read/write lines to Pandas.
+    # lg = pd.read_csv(log_path, dtype=str)
+    # lg = lg["Model"] + "_" + lg["Variable"] + "_" + lg["Catchment"] + "_" + lg["Flag"]
+
 cases_to_process = []
 for model in models:
+    model_folder_check = True
     for catch in catchments:
         for variable in variables:
-            case = '_'.join([model, variable, catch, 'Y'])
-            if case not in processed:
+            case_str = '_'.join([model, variable, catch, 'Y'])
+            case_int = '_'.join([str(int(model)), variable, catch, 'Y'])
+            if (case_str not in processed) and (case_int not in processed):
                 cases_to_process.append([model, variable, catch])
+
+        # Create a Bias Controlled RCP folder to store the new simulations:
+        if model_folder_check:
+            output_folder = scenario_folder + "bc_" + model + '/'
+            model_folder_check = False  # Check only once
+            if not os.path.exists(output_folder):
+                os.mkdir(output_folder)
+
+        # Create a catchment folder to store each new simulation:
+        output_folder = scenario_folder + "bc_" + model + '/' + catch + "/"
+        if not os.path.exists(output_folder):
+            os.mkdir(output_folder)
+
 
 if __name__ == "__main__":
 
@@ -320,9 +341,9 @@ if __name__ == "__main__":
 
             try:
                 process_catchment(catch, model, variable)
-                output_line = [model, variable, catch, 'Y']
-                output_line = ','.join(output_line)
-                fh_log.write(output_line + '\n')
+                # output_line = [model, variable, catch, 'Y']
+                output_line = ','.join([model, variable, catch, 'Y'])
+                fh_log.write(output_line + '\n', )
             except Exception as e:
                 print(e)
                 output_line = [model, variable, catch, 'N']
