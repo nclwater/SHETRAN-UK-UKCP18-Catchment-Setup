@@ -52,7 +52,7 @@ if not os.path.isdir(blade_folder):
 
 # Set climate runs to simulate:
 # rcm_suites = ["bc_04", "bc_05", "bc_06", "bc_07", "bc_08", "bc_09", "bc_10", "bc_11", "bc_12", "bc_13", "bc_15"]
-rcm_suites = ["bc_13"]
+rcm_suites = ["bc_01"]
 
 # Set the file containing catchment names and multiprocessing groups:
 runtimes_path = "I:/SHETRAN_GB_2021/05_Climate_Change_Simulations/UKCP18rcm_181022_APM_UK_CEH/Catchment Ranking for " \
@@ -65,7 +65,7 @@ group_to_process = int(sys.argv[1])
 
 # Choose whether you want multiprocessing:
 use_multiprocessing = True
-num_processes = 12
+num_processes = 10
 
 # Read in the catchment/simulation name and their processing groups:
 catchments = pd.read_csv(runtimes_path)
@@ -87,7 +87,9 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
 
     # Copy simulation to Blade (creating directory) if doing that:
     if simulation_store_folder is not None:
-        folder_copy(simulation_store_folder, simulation_run_folder, True)
+        folder_copy(source_folder=simulation_store_folder,
+                    destination_folder=simulation_run_folder,
+                    overwrite=True)
 
     os.chdir(str(executable_folder))
     start_time = time.time()
@@ -97,8 +99,7 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
         return_code = subprocess.call(
             ['./shetran-prepare-snow.exe', simulation_run_folder + catchment + "_LibraryFile.xml"])
         prep_flag = 'Y'
-    except Exception as e:
-        print(e)
+    except:
         prep_flag = 'N'
 
     # Edit the Visualisation plan to get daily soil moisture in the top 2m for 30 years:
@@ -109,7 +110,7 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
 
     visualisation_plan_swap_line(
         "stop",
-        "times\n10 1 !number and no. of entries\n24 260064 !every 24 hours for 30.1 years (1980-2010)\n\nstop",
+        "times\n10 1 !number and no. of entries\n24 260064 !every 24 hours for 30.1 360-day years (1980-2010)\n\nstop",
         simulation_run_folder + "input_" + catchment + "_visualisation_plan.txt")
 
     # Edit the Visualisation plan to remove the snow output item:
@@ -133,7 +134,9 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
 
     # Copy and delete from Blade:
     if simulation_store_folder is not None:
-        folder_copy(simulation_run_folder, simulation_store_folder, overwrite=True)
+        folder_copy(source_folder=simulation_run_folder,
+                    destination_folder=simulation_store_folder,
+                    overwrite=True, keep_largest=True, outputs_only=True)
         shutil.rmtree(simulation_run_folder)
 
     print("- - - - - - - - - - - - - - - - - - - -")
@@ -178,12 +181,12 @@ def run_SHETRAN_batch_with_copy_mp(catchment_list, simulation_source_folder,
     # Run the simulations (i.e. jobs)
     try:
         for job in jobs:
-            try:
-                # Adding this try here means that if there is a general (i.e. non-SHETRAN) error,
-                # it will continue to try getting jobs. Else it will just crash. E.g. missing library file.
-                job.get()
-            except:
-                print("ERROR in one of the job files. Skipping. Perhaps a missing simulation file?")
+            # try:
+            #     # Adding this try here means that if there is a general (i.e. non-SHETRAN) error,
+            #     # it will continue to try getting jobs. Else it will just crash. E.g. missing library file.
+            job.get()
+            # except:
+            #     print("ERROR in one of the job files. Skipping. Perhaps a missing simulation file?")
 
     # But include the option to kill them - 1st attempt, may need refining... but seems to work
     except KeyboardInterrupt:
@@ -197,7 +200,9 @@ def run_SHETRAN_batch_with_copy_mp(catchment_list, simulation_source_folder,
     pool.join()
 
 
-def folder_copy(source_folder, destination_folder, overwrite=False):
+def folder_copy(source_folder, destination_folder, overwrite=False,
+                keep_largest=False, outputs_only=False):
+
     if not os.path.isdir(destination_folder):
         os.mkdir(destination_folder)
 
@@ -207,10 +212,25 @@ def folder_copy(source_folder, destination_folder, overwrite=False):
         destination_files = os.listdir(destination_folder)
         files_2_copy = [i for i in files_2_copy if i not in destination_files]
 
-    for file in files_2_copy:
-        shutil.copy2(source_folder + file, destination_folder + file)
+    # If overwriting, and keeping the largest, remove files from files_2_copy that are smaller than in the destination.
+    if keep_largest:
+        # Run through the files in the files_2_copy:
+        for f2c in files_2_copy:
+            # Is there already a file in the destination folder?
+            if os.path.isfile(destination_folder + f2c):
+                # If so, which is bigger, source or destination?
+                if os.stat(destination_folder + f2c).st_size >= os.stat(source_folder + f2c).st_size:
+                    # If the destination file is the biggest, remove the file from the list of files to copy:
+                    files_2_copy = [sf for sf in files_2_copy if sf != f2c]
 
-    return files_2_copy
+    # If you only want to copy outputs, only include these in the copy list:
+    if outputs_only:
+        files_2_copy = [i for i in files_2_copy if "output" in i]
+
+    # Copy each of the remaining files across:
+    if len(files_2_copy) > 0:
+        for file in files_2_copy:
+            shutil.copy2(source_folder + file, destination_folder + file)
 
 
 def visualisation_plan_swap_line(old_line, new_line, file_in, file_out=None, strip_ws=True):
