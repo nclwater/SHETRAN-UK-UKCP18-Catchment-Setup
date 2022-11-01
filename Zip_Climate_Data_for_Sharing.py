@@ -14,6 +14,7 @@ import os
 from zipfile import ZipFile, ZIP_DEFLATED
 import sys
 import pandas as pd
+
 # import tarfile
 
 root = "I:/SHETRAN_GB_2021/"
@@ -47,7 +48,8 @@ for m in models:
 
     # If you are only zipping some folders, take these from the list:
     if only_zip_some_folders:
-        folders = files_for_zip.loc[files_for_zip['RCP'] == int(m)]["Catchment"]
+        folders_int = files_for_zip.loc[files_for_zip['RCP'] == int(m)]["Catchment"]
+        folders = [str(f) for f in folders_int]
 
     # Else list them from the available folders in the directory:
     else:
@@ -61,8 +63,8 @@ for m in models:
         print(m, "-", folder)
 
         # Set up a zipfile for holding the climate data for that catchment:
-        with ZipFile(master_zip + "/" + folder + '.zip', 'w', ZIP_DEFLATED) as zip:
-        # with tarfile.open(master_zip + "/" + folder + '.tar.gz', "w:gz") as tar:
+        with ZipFile(master_zip + "/" + folder + '.zip', 'w', ZIP_DEFLATED) as zip_file:
+        #  with tarfile.open(master_zip + "/" + folder + '.tar.gz', "w:gz") as tar:
 
             # Run through the four climate files:
             for c in climate_files:
@@ -80,7 +82,7 @@ for m in models:
                     catchment_issues.append(m + "_" + folder + '-' + c)
                 else:
                     # If the file exists and contains data, write it to a zip file:
-                    zip.write(clim_file, folder + c)
+                    zip_file.write(clim_file, folder + c)
                     # tar.add(clim_file)
 
     print(catchment_issues)
