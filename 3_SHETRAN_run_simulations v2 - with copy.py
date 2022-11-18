@@ -37,16 +37,14 @@ import time
 # USER INPUTS
 
 # Set file paths:
-executable_folder = "C:/ProgramData/Water_Blade_Programs/BenSmith/SHETRAN_snow"
-CONVEX_simulation_folder = "I:/SHETRAN_GB_2021/UKCP18rcm_220708_APM_GB/"
+prepare_folder = "C:/ProgramData/Water_Blade_Programs/BenSmith/SHETRAN_snow"  # required as the new prepare only has  14 thick layers
+executable_folder = "C:/ProgramData/Water_Blade_Programs/BenSmith/SHETRAN_snow_4.5.2"  # _4.5.2
+
+CONVEX_simulation_folder = "I:/SHETRAN_GB_2021/05_Climate_Change_Simulations/UKCP18rcm_220708_APM_UK/"
 blade_folder = "C:/BenSmith/Blade_SHETRANGB_OpenCLIM_UKCP18rcm_220708_APM/Temp_simulations/"
 
-# Set climate runs to simulate:
-# rcm_suites = ["bc_04", "bc_05", "bc_06", "bc_07", "bc_08", "bc_09", "bc_10", "bc_11", "bc_12", "bc_13", "bc_15"]
-rcm_suites = ["bc_07"]
-
-# Set the file containing catchment names and multiprocessing groups:
-runtimes_path = CONVEX_simulation_folder + rcm_suites[0] + '/UKCP18_runtime_estimates_' + rcm_suites[0] + '.csv'
+if not os.path.isdir(blade_folder):
+    os.mkdir(blade_folder)
 
 # Setup input argument for taking the group that you would like to process from conda prompt:
 group_to_process = int(sys.argv[1])
@@ -55,21 +53,16 @@ group_to_process = int(sys.argv[1])
 
 # Choose whether you want multiprocessing:
 use_multiprocessing = True
-num_processes = 10
+num_processes = 7
 
-# Read in the catchment/simulation name and their processing groups:
-catchments = []
-
-with open(runtimes_path, 'r') as fh:
-    fh.readline()
-    for line in fh:
-        gauge_id, _, _, group, _ = line.rstrip().split(',')
-        if int(group) == group_to_process:
-            catchments.append(gauge_id)
-
+# Set climate runs to simulate:
+# rcm_suites = ["bc_01", "bc_04", "bc_05", "bc_06", "bc_07", "bc_08", "bc_09", "bc_10", "bc_11", "bc_12", "bc_13", "bc_15"]
+rcm_suites = ["bc_15"]
 
 # -----------------------------------------------------------------------------
 # FUNCTIONS FOR RUNNING SIMULATIONS
+if use_multiprocessing:
+    import multiprocessing as mp
 
 def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_store_folder=None, q=None):
     print("----------------------------------------------------------------------------------")
@@ -78,9 +71,11 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
 
     # Copy simulation to Blade (creating directory) if doing that:
     if simulation_store_folder is not None:
-        folder_copy(simulation_store_folder, simulation_run_folder, True)
+        folder_copy(source_folder=simulation_store_folder,
+                    destination_folder=simulation_run_folder,
+                    overwrite=True)
 
-    os.chdir(str(executable_folder))
+    os.chdir(str(prepare_folder))
     start_time = time.time()
 
     # Run the prepare script:
@@ -94,7 +89,7 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
     # Edit the Visualisation plan to get daily soil moisture in the top 2m for 30 years:
     visualisation_plan_swap_line(
         "GRID_OR_LIST_NO^7 : TIMES^8 : LAYERS^1 1 : ENDITEM",
-        "GRID_OR_LIST_NO^7 : TIMES^10 : LAYERS^1 6 : ENDITEM",
+        "GRID_OR_LIST_NO^7 : TIMES^10 : LAYERS^1 15 : ENDITEM",
         simulation_run_folder + "input_" + catchment + "_visualisation_plan.txt")
 
     visualisation_plan_swap_line(
@@ -108,6 +103,7 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
     visualisation_plan_remove_item("1", simulation_run_folder + "input_" + catchment + "_visualisation_plan.txt")
 
     # Run the SHETRAN simulation:
+    os.chdir(str(executable_folder))
     try:
         return_code = subprocess.call(  # Requires the 3 separate arguments
             ['shetran.exe', '-f ', simulation_run_folder + "rundata_" + catchment + ".txt"])
@@ -120,7 +116,9 @@ def run_SHETRAN_batch_with_copy(catchment, simulation_run_folder, simulation_sto
 
     # Copy and delete from Blade:
     if simulation_store_folder is not None:
-        folder_copy(simulation_run_folder, simulation_store_folder, overwrite=True)
+        folder_copy(source_folder=simulation_run_folder,
+                    destination_folder=simulation_store_folder,
+                    overwrite=True, keep_largest=True, outputs_only=True)
         shutil.rmtree(simulation_run_folder)
 
     print("- - - - - - - - - - - - - - - - - - - -")
@@ -178,7 +176,8 @@ def run_SHETRAN_batch_with_copy_mp(catchment_list, simulation_source_folder,
     pool.join()
 
 
-def folder_copy(source_folder, destination_folder, overwrite=False):
+def folder_copy(source_folder, destination_folder, overwrite=False,
+                keep_largest=False, outputs_only=False):
     if not os.path.isdir(destination_folder):
         os.mkdir(destination_folder)
 
@@ -188,10 +187,25 @@ def folder_copy(source_folder, destination_folder, overwrite=False):
         destination_files = os.listdir(destination_folder)
         files_2_copy = [i for i in files_2_copy if i not in destination_files]
 
-    for file in files_2_copy:
-        shutil.copy2(source_folder + file, destination_folder + file)
+    # If overwriting, and keeping the largest, remove files from files_2_copy that are smaller than in the destination.
+    if keep_largest:
+        # Run through the files in the files_2_copy:
+        for f2c in files_2_copy:
+            # Is there already a file in the destination folder?
+            if os.path.isfile(destination_folder + f2c):
+                # If so, which is bigger, source or destination?
+                if os.stat(destination_folder + f2c).st_size >= os.stat(source_folder + f2c).st_size:
+                    # If the destination file is the biggest, remove the file from the list of files to copy:
+                    files_2_copy = [sf for sf in files_2_copy if sf != f2c]
 
-    return files_2_copy
+    # If you only want to copy outputs, only include these in the copy list:
+    if outputs_only:
+        files_2_copy = [i for i in files_2_copy if "output" in i]
+
+    # Copy each of the remaining files across:
+    if len(files_2_copy) > 0:
+        for file in files_2_copy:
+            shutil.copy2(source_folder + file, destination_folder + file)
 
 
 def visualisation_plan_swap_line(old_line, new_line, file_in, file_out=None, strip_ws=True):
@@ -309,25 +323,41 @@ def log_progress(q):
 
 # Launch runs
 if __name__ == '__main__':
-    if use_multiprocessing:
 
-        import multiprocessing as mp
+    for rcm in rcm_suites:
 
-        for rcm in rcm_suites:
+        # Set the file containing catchment names and multiprocessing groups:
+        runtimes_path = CONVEX_simulation_folder + rcm + '/UKCP18_runtime_estimates_' + rcm + '.csv'
+
+        # Read in the catchment/simulation name and their processing groups:
+        catchments = []
+
+        with open(runtimes_path, 'r') as fh:
+            fh.readline()
+            for line in fh:
+                gauge_id, _, _, group, _ = line.rstrip().split(',')
+                if int(group) == group_to_process:
+                    catchments.append(gauge_id)
+
+        if use_multiprocessing:
+
             run_SHETRAN_batch_with_copy_mp(catchment_list=catchments,
                                            simulation_source_folder=CONVEX_simulation_folder,
                                            temp_simulation_folder=blade_folder,
                                            simulation_subfolder=rcm)
 
-    else:
-        # TODO I don't know whether this works with the copy as it doesn't define the temp_simulation_folder...
-        for rcm in rcm_suites:
+        else:
+            # TODO I don't know whether this works with the copy as it doesn't define the temp_simulation_folder...
+
             log_path = CONVEX_simulation_folder + rcm + '/runlog_' + str(group_to_process) + '.txt'
             write_log_header = True
+
             for c in range(len(catchments)):
+
                 log_entry = run_SHETRAN_batch_with_copy(
                     catchment=catchments[c],
                     simulation_run_folder=CONVEX_simulation_folder + rcm + "/" + catchments[c] + '/')
+
                 with open(log_path, 'w') as fh:
                     if write_log_header:
                         fh.write('Catchment, prep_ReturnCode, run_ReturnCode, Simulation Duration (mins), '
