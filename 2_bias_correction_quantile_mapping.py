@@ -4,6 +4,21 @@ Bias Correct the UKCP18 Climate Data
 Ben Smith (adapted from David Prichard)
 12/07/2022
 -----------------------------------------------------------------------------
+
+Code logged for internal use, appologies for untidiness...
+
+--- WARNING --- April 2024 --------------------------------------------------
+This code was not used in the final OpenCLIM Bias corrections.
+This script will bias correct the data by using the whole control period to 
+correct the whole future period. This does not account for any seasonality.
+The work/paper 'Physically Based Modelling of UK River Flows Under Climate 
+Change' (Smith et al., 2024) instead used monthly means for bias correction - 
+this ensures that there is seasonality included in the modelling. This affects 
+areas that have strong seasonal patterns in rainfall and makes a significant 
+difference to the model results. The updated (generalised) code can be found here:
+https://github.com/OpenCLIM/UKCP18-PET-and-Bias-Correction-for-Hydrology
+-----------------------------------------------------------------------------
+
 This script adapts the previously setup SHETRAN simulations to bias corrected
 climate data. This is slightly different to the previous version on this
 script as it does not break down the scenarios into decades.
