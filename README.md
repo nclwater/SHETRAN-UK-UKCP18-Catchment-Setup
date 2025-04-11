@@ -6,6 +6,7 @@ To setup and create these simulations run:
     - 0_pet.py - to create the necessary PET data.
     - 1a_Setup... - To create non-bias-corrected simulations.
     - 2_bias_correction.... - to create new simulations of bias corrected climate data.
+        **NOT USED IN FINAL OPENCLIM STUDY - see file for details**
     - 3_SHETRAN_run_simulations v2 - with copy.py - to copy files to the blades, run simulation and copy back.
     - Or, SHETRAN_copy.py & SHETRAN_run_simulations v1, which does similar.
 
